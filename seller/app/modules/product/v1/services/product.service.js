@@ -15,6 +15,7 @@ import {
 import Organization from "../../../authentication/models/organization.model";
 import s3 from "../../../../lib/utils/s3Utils";
 import MESSAGES from "../../../../lib/utils/messages";
+import MappedCity from "../../../../lib/utils/mappedCityCode";
 import {
     BadRequestParameterError,
     DuplicateRecordFoundError,
@@ -1044,6 +1045,161 @@ class ProductService {
             }
             //collect all store details by
             return products;
+        } catch (err) {
+            console.log(
+                "[OrderService] [getAll] Error in getting all from organization ",
+                err
+            );
+            throw err;
+        }
+    }
+
+    async searchIncrementalPull(params, category) {
+        try {
+            let query = {};
+            let orgs;
+            if (params.city) {
+                const cityCode = params.city.split(":")[1];
+                let cityData = MappedCity(cityCode);
+                cityData = cityData.map((data) => data.Pincode);
+                orgs = await Organization.find({
+                    "storeDetails.address.area_code": { $in: cityData },
+                }).lean();
+            } else {
+                orgs = await Organization.find({}).lean();
+            }
+            let products = [];
+            for (const org of orgs) {
+                let productData = [];
+                let customMenu = [];
+                query.organization = org._id;
+                let storeImage = await s3.getSignedUrlForRead({
+                    path: org.storeDetails.logo,
+                });
+                org.storeDetails.logo = storeImage.url;
+                query.published = true;
+                // query.type = 'item'; // filter to fetch only items
+                if (category) {
+                    query.productCategory = { $regex: ".*" + category + ".*" };
+                }
+                // query.productName = {$regex: params.message.intent.item.descriptor.name,$options: 'i'}
+                //let product = await Product.findOne({_id:productId,organization:currentUser.organization}).populate('variantGroup').lean();
+
+                const data = await Product.find(query)
+                    .populate("variantGroup")
+                    .sort({ createdAt: 1 })
+                    .skip(params.offset)
+                    .limit(params.limit)
+                    .lean();
+                if (data.length > 0) {
+                    for (let product of data) {
+                        let productDetails = product;
+                        let images = [];
+                        for (const image of productDetails.images) {
+                            let imageData = await s3.getSignedUrlForRead({
+                                path: image,
+                            });
+                            images.push(imageData.url);
+                        }
+                        product.images = images;
+                        let attributeData = [];
+                        const attributes = await ProductAttribute.find({
+                            product: product._id,
+                        });
+                        for (const attribute of attributes) {
+                            let value = attribute.value;
+                            if (attribute.code === "size_chart") {
+                                let sizeChart = await s3.getSignedUrlForRead({
+                                    path: attribute.value,
+                                });
+                                value = sizeChart?.url ?? "";
+                            }
+                            const attributeObj = {
+                                code: attribute.code,
+                                value: value,
+                            };
+                            attributeData.push(attributeObj);
+                        }
+                        product.attributes = attributeData;
+                        const customizationDetails =
+                            (await customizationService.mappdedData(
+                                product.customizationGroupId,
+                                { organization: product.organization }
+                            )) ?? {};
+                        product.customizationDetails = customizationDetails;
+                        if (Object.keys(customizationDetails).length > 0) {
+                            const accumulatedMaxMRP = await this.getMaxMRP(
+                                product.customizationGroupId,
+                                {
+                                    maxMRP: product.MRP,
+                                    maxDefaultMRP: product.MRP,
+                                },
+                                { organization: product.organization }
+                            );
+                            product.maxMRP =
+                                accumulatedMaxMRP?.maxMRP ?? product.MRP;
+                            product.maxDefaultMRP =
+                                accumulatedMaxMRP?.maxDefaultMRP ?? product.MRP;
+                        }
+                        productData.push(product);
+                    }
+                    // getting Menu for org ->
+                    let menus = await CustomMenu.find({
+                        category: category,
+                        organization: org._id,
+                    }).lean();
+                    for (const menu of menus) {
+                        let customMenuTiming = await CustomMenuTiming.findOne({
+                            customMenu: menu._id,
+                            organization: org._id,
+                        });
+                        let images = [];
+                        let menuObj = {
+                            id: menu._id,
+                            name: menu.name,
+                            seq: menu.seq,
+                        };
+                        for (const image of menu.images) {
+                            let imageData = await s3.getSignedUrlForRead({
+                                path: image,
+                            });
+                            images.push(imageData.url);
+                        }
+                        let menuQuery = {
+                            organization: org._id,
+                            customMenu: menu._id,
+                        };
+                        let menuProducts = await CustomMenuProduct.find(
+                            menuQuery
+                        )
+                            .sort({ seq: "ASC" })
+                            .populate([
+                                {
+                                    path: "product",
+                                    select: ["_id", "productName"],
+                                },
+                            ]);
+                        let productData = [];
+                        for (const menuProduct of menuProducts) {
+                            let productObj = {
+                                id: menuProduct.product._id,
+                                name: menuProduct.product.productName,
+                                seq: menuProduct.seq,
+                            };
+                            productData.push(productObj);
+                        }
+                        menuObj.products = productData;
+                        menuObj.images = images;
+                        menuObj.timings = customMenuTiming?.timings ?? [];
+                        customMenu.push(menuObj);
+                    }
+                    org.items = productData;
+                    org.menu = customMenu;
+                    products.push(org);
+                }
+            }
+            //collect all store details by
+            return { products };
         } catch (err) {
             console.log(
                 "[OrderService] [getAll] Error in getting all from organization ",
