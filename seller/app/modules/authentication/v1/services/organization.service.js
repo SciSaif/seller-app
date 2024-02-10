@@ -737,22 +737,27 @@ class OrganizationService {
                 _id: organizationId,
             }); //.lean();
             if (organization) {
-                let userExist = await User.findOne({
-                    mobile: data.user.mobile,
-                    organization: organizationId,
-                });
+                if (data?.user) {
+                    let userExist = await User.findOne({
+                        mobile: data.user.mobile,
+                        organization: organizationId,
+                    });
 
-                if (userExist && userExist.organization !== organizationId) {
-                    throw new DuplicateRecordFoundError(
-                        MESSAGES.USER_ALREADY_EXISTS
-                    );
-                } else {
-                    const updateUser = await User.findOneAndUpdate(
-                        { organization: organizationId },
-                        data.user
-                    );
+                    if (
+                        userExist &&
+                        userExist.organization !== organizationId
+                    ) {
+                        throw new DuplicateRecordFoundError(
+                            MESSAGES.USER_ALREADY_EXISTS
+                        );
+                    } else {
+                        const updateUser = await User.findOneAndUpdate(
+                            { organization: organizationId },
+                            data.user
+                        );
+                    }
                 }
-
+                console.log("hello");
                 let updateOrg = await Organization.findOneAndUpdate(
                     { _id: organizationId },
                     data.providerDetails

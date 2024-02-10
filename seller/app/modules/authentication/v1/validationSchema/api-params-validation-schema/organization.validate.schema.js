@@ -35,6 +35,7 @@ module.exports = {
             user: {
                 mobile: Joi.string(),
                 name: Joi.string(),
+                enabled: Joi.boolean(),
             },
             providerDetails: {
                 name: Joi.string(),
@@ -55,6 +56,7 @@ module.exports = {
                 PAN: { PAN: Joi.string(), proof: Joi.string() },
                 GSTN: { GSTN: Joi.string(), proof: Joi.string() },
                 FSSAI: Joi.string(),
+                isEnabled: Joi.boolean(),
             },
         });
     },

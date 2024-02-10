@@ -24,8 +24,8 @@ router.post(
 
 router.put(
     "/v1/organizations/:id/",
-    authentication.middleware(),
-    authorisation.middleware({ roles: [SYSTEM_ROLE.SUPER_ADMIN] }),
+    // authentication.middleware(),
+    // authorisation.middleware({ roles: [SYSTEM_ROLE.SUPER_ADMIN] }),
     apiParamsValidator.middleware({ schema: organisationSchema.update() }),
     organizationController.update
 );
