@@ -1,4 +1,4 @@
-import {UnauthorisedError} from '../errors';
+import { UnauthorisedError } from "../errors";
 
 class Authorisation {
     /**
@@ -6,8 +6,8 @@ class Authorisation {
      * @param {*} roles  Role list
      */
     constructor(user, roles) {
-        console.log('this.user---->',JSON.stringify(user, null, 2));
-        console.log('this.roles---->',JSON.stringify(roles, null, 2));
+        console.log("this.user---->", JSON.stringify(user, null, 2));
+        console.log("this.roles---->", JSON.stringify(roles, null, 2));
         this.user = user;
         this.roles = roles;
     }
@@ -18,12 +18,16 @@ class Authorisation {
     isAllowed() {
         return new Promise(async (resolve, reject) => {
             try {
-
                 let templatePermission = [];
 
+                // if user role is super admin then allow access to all resources
+                if (this.user.role.name === "Super Admin") {
+                    resolve();
+                }
+
                 // if user has a provided role
-                this.roles.forEach(obj => {
-                    if (this.user.role.name===obj) {
+                this.roles.forEach((obj) => {
+                    if (this.user.role.name === obj) {
                         resolve();
                     }
                 });

@@ -22,6 +22,7 @@ import CustomizationGroup from "../../../customization/models/customizationGroup
 import ProductService from "../../../product/v1/services/product.service";
 //import axios from 'axios';
 //import ServiceApi from '../../../../lib/utils/serviceApi';
+import util from "util";
 
 const userService = new UserService();
 class OrganizationService {
@@ -44,6 +45,7 @@ class OrganizationService {
             for (const org of orgs) {
                 let provider = {};
                 const store = org.storeDetails;
+                if (store.location === undefined) continue;
                 const storeLogo = await s3.getSignedUrlForRead({
                     path: store.logo,
                 });
@@ -65,6 +67,11 @@ class OrganizationService {
                     },
                     "@ondc/org/fssai_license_no": org.FSSAI,
                 };
+                console.log(
+                    "-----------------------------------------------------location id",
+                    store.location,
+                    store
+                );
                 provider.locations = {
                     [store.location._id]: {
                         id: store.location._id.toString(),
@@ -164,6 +171,7 @@ class OrganizationService {
                             attributeData.push(attributeObj);
                         }
                         product.attributes = attributeData;
+
                         const customizationDetails =
                             (await customizationService.mappdedData(
                                 product.customizationGroupId,
@@ -236,10 +244,10 @@ class OrganizationService {
                                     ],
                                 };
 
-                                customGroupsTags.push({
-                                    code: "id",
-                                    value: cgId,
-                                });
+                                // customGroupsTags.push({
+                                //     code: "id",
+                                //     value: cgId,
+                                // });
                             }
                             for (const customizationGroup of customizationGroups) {
                                 let cgId = customizationGroup._id.toString();
@@ -253,13 +261,21 @@ class OrganizationService {
                                     continue;
                                 }
 
-                                customGroupsTags.push({
-                                    code: "id",
-                                    value: cgId,
-                                });
+                                // customGroupsTags.push({
+                                //     code: "id",
+                                //     value: cgId,
+                                // });
                             }
                         }
 
+                        customGroupsTags.push({
+                            code: "id",
+                            value: product.customizationGroupId,
+                        });
+                        // console.log(
+                        //     "--------------->>>",
+                        //     util.inspect(product)
+                        // );
                         // console.log("product", product);
                         let parentCGId = "";
                         let childCGId = "";
@@ -304,7 +320,7 @@ class OrganizationService {
                                 },
                                 price: {
                                     currency: "INR",
-                                    value: product.purchasePrice,
+                                    value: product.purchasePrice || product.MRP,
                                     maximum_value: product.MRP,
                                 },
                                 category_id: product.productCategory,
@@ -313,7 +329,7 @@ class OrganizationService {
                                     (f) => f.type === product.fulfillmentOption
                                 )?.id,
                                 location_id: store.location._id.toString(),
-                                related: false, // @TODO what is it?
+                                related: product.type === "item" ? false : true,
                                 recommended: false, // @TODO what is it?
                                 "@ondc/org/returnable": product.isReturnable,
                                 "@ondc/org/cancellable": product.isCancellable,
@@ -443,6 +459,66 @@ class OrganizationService {
                         menuObj.images = images;
                         menuObj.timings = customMenuTiming?.timings ?? [];
                         customMenu.push(menuObj);
+                        console.log(
+                            "---------------------------------customMenu",
+                            util.inspect(CustomMenuTiming, false, 10)
+                        );
+                        if (categories[menu._id]) continue;
+                        categories[menu._id] = {
+                            id: menu._id,
+                            parent_category_id: "",
+                            descriptor: {
+                                name: menu.name,
+                                short_desc: menu.shortDescription,
+                                long_desc: menu.longDescription,
+                                images: images,
+                            },
+                            tags: [
+                                {
+                                    code: "type",
+                                    list: [
+                                        {
+                                            code: "type",
+                                            value: "custom_menu",
+                                        },
+                                    ],
+                                },
+                                {
+                                    code: "timing",
+                                    list: [
+                                        {
+                                            code: "day_from",
+                                            value: customMenuTiming?.timings[0]
+                                                .daysRange.from,
+                                        },
+                                        {
+                                            code: "day_to",
+                                            value: customMenuTiming?.timings[0]
+                                                .daysRange.to,
+                                        },
+                                        {
+                                            code: "time_from",
+                                            value: customMenuTiming?.timings[0]
+                                                .timings[0].from,
+                                        },
+                                        {
+                                            code: "time_to",
+                                            value: customMenuTiming?.timings[0]
+                                                .timings[0].to,
+                                        },
+                                    ],
+                                },
+                                {
+                                    code: "display",
+                                    list: [
+                                        {
+                                            code: "rank",
+                                            value: menu.seq,
+                                        },
+                                    ],
+                                },
+                            ],
+                        };
                     }
                 }
 

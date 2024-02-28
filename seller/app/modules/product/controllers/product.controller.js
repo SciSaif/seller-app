@@ -47,6 +47,7 @@ class ProductController {
             query.offset = parseInt(query.offset ?? 0);
             query.limit = parseInt(query.limit ?? 100);
             query.organization = req.user.organization;
+            if (query.org_id) query.organization = query.org_id;
             const products = await productService.list(query);
             return res.send(products);
         } catch (error) {
