@@ -23,16 +23,425 @@ import ProductService from "../../../product/v1/services/product.service";
 //import axios from 'axios';
 //import ServiceApi from '../../../../lib/utils/serviceApi';
 import util from "util";
+import { generatePrime } from "crypto";
 
 const userService = new UserService();
 class OrganizationService {
+    async get_s3_url(path) {
+        const resolved_url = await s3.getSignedUrlForRead({
+            path: path,
+        });
+        return resolved_url.url
+    }
+
+    format_time_hhmm(time_string) {
+        return time_string.replace(":", "")
+    }
+
+    async build_provider_detail_block(org) {
+        const store = org.storeDetails;
+        const storeLogo = await this.get_s3_url(store.logo)
+        const detail_block = {
+            descriptor: {
+                name: org.name,
+                symbol: storeLogo.url,
+                short_desc: org.name,
+                long_desc: org.name,
+                images: [storeLogo.url],
+            },
+            "@ondc/org/fssai_license_no": org.FSSAI,
+        }
+
+        return detail_block
+    }
+
+    async build_location_detail_block(org) {
+        const store = org.storeDetails;
+
+        const detail_block = {
+            id: store.location._id.toString(),
+            gps: `${store.location.lat},${store.location.long}`,
+            time: {
+                label: store.storeTiming.status,
+                timestamp: new Date().toISOString(),
+                days: "1,2,3,4,5,6,7", // [FIXME] hard-coded
+                schedule: {
+                    holidays: store.storeTiming.holidays,
+                    frequency: "PT4H",
+                    times: ["0000", "0000"]
+                },
+                range: {
+                    start: "0000",
+                    end: "0000"
+                }
+            },
+            address: {
+                locality: store.address.locality,
+                street: store.address.building, // @TODO - street is not there
+                city: store.address.city,
+                area_code: store.address.area_code,
+                state: store.address.state,
+            },
+            contact: {
+                phone: store.supportDetails.mobile,
+            },
+        }
+
+        return detail_block
+    }
+
+    async build_fulfillment_block(org) {
+        const store = org.storeDetails;
+        const detail_block = {
+        }
+        for (const fulfillment of store.fulfillments) {
+            detail_block[fulfillment.id] = {
+                id: fulfillment.id.toString(),
+                type: fulfillment.type,
+                contact: {
+                    phone: fulfillment.contact.phone,
+                    mail: fulfillment.contact.email,
+                },
+            };
+        }
+
+        return detail_block
+    }
+
+    async build_timing_tags(timings) {
+        const tags = []
+        for (const timing of timings) {
+            for (const day_timing of timing.timings) {
+                const entry = {
+                    code: "timing",
+                    list: [
+                        {
+                            code: "day_from",
+                            value: timing.daysRange.from.toString()
+                        },
+                        {
+                            code: "day_to",
+                            value: timing.daysRange.to.toString()
+                        },
+                        {
+                            code: "time_from",
+                            value: this.format_time_hhmm(day_timing.from)
+                        },
+                        {
+                            code: "time_to",
+                            value: this.format_time_hhmm(day_timing.to)
+                        }
+                    ]
+                }
+                tags.push(entry)
+            }
+        }
+        return tags
+    }
+
+    async build_categories_block_from_custom_menu(org) {
+        const detail_block = {
+        }
+
+        const store = org.storeDetails;
+        const custom_menus = await CustomMenu.find({organization: org._id});
+        for (const custom_menu of custom_menus) {
+            const promises = []
+            for (const image_path of custom_menu.images) {
+                const image_url = this.get_s3_url(image_path)
+                promises.push(image_url)
+            }
+            const image_urls = await Promise.all(promises)
+
+            detail_block[custom_menu._id] = {
+                id: custom_menu._id,
+                parent_category_id: "",
+                descriptor: {
+                    name: custom_menu.name,
+                    short_desc: custom_menu.shortDescription,
+                    long_desc: custom_menu.longDescription,
+                    images: image_urls,
+                },
+                tags: [
+                    {
+                        code: "type",
+                        list: [
+                            {
+                                code: "type",
+                                value: "custom_menu"
+                            }
+                        ]
+                    },
+                    {
+                        code: "display",
+                        list: [
+                            {
+                                code: "rank",
+                                value: custom_menu.seq.toString()
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+        const custom_menu_timings = await CustomMenuTiming.find({organization: org._id});
+        for (const menu_timing of custom_menu_timings) {
+            if (menu_timing.customMenu in detail_block) {
+                const timings = menu_timing.timings
+                detail_block[menu_timing.customMenu].tags.push(...this.build_timing_tags(timings))
+            }
+        }
+
+        return detail_block
+    }
+
+    async build_categories_block_from_custom_group(org) {
+        const detail_block = {}
+        const custom_groups = await CustomizationGroup.find({organization: org._id})
+        for (const custom_group of custom_groups) {
+            detail_block[custom_group._id] = {
+                id: _id,
+                descriptor: {
+                    name: custom_group.name,
+                },
+                tags: [
+                    {
+                        code: "type",
+                        list: [
+                            {
+                                code: "type",
+                                value: "custom_group"
+                            }
+                        ]
+                    },
+                    {
+                        code: "config",
+                        list: [
+                            {
+                                code: "min",
+                                value: custom_group.minQuantity.toString()
+                            },
+                            {
+                                code: "max",
+                                value: custom_group.maxQuantity.toString()
+                            },
+                            {
+                                code: "input",
+                                value: custom_group.inputType
+                            },
+                            {
+                                code: "seq",
+                                value: custom_group.seq.toString()
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        return detail_block
+    }
+
+    async build_categories_block(org) {
+        const custom_menu = await this.build_categories_block_from_custom_menu();
+        const custom_group = await this.build_categories_block_from_custom_group();
+        return {
+            ...custom_menu,
+            ...custom_group
+        }
+    }
+
+    async build_item_block(org) {
+        const products = await Product.find({
+            organization: org._id,
+            published: true
+        }).populate("variantGroup").sort({ createdAt: 1 }).lean();
+
+        const details = {};
+        for (const product of products) {
+            const entry = {
+                id: product._id,
+                descriptor: {
+                    name: product.productName
+                },
+                quantity: {
+                    unitized: {
+                        measure: {
+                            unit: product.UOM,
+                            value: product.UOMValue.toString(),
+                        }
+                    },
+                    available: {
+                        count: product.quantity.toString()
+                    },
+                    maximum: {
+                        count: product.maxAllowedQty.toString()
+                    }
+                },
+                price: {
+                    currency: "INR",
+                    value: product.MRP,
+                    maximum_value: product.MRP,
+                },
+                category: "F&B",
+                related: (product.type !== "item"),
+                tags: [
+                    {
+                        code: "type",
+                        list: [
+                            {
+                                code: "type",
+                                value: product.type
+                            }
+                        ]
+                    },
+                    {
+                        code: "veg_nonveg",
+                        list: [
+                            {
+                                code: "veg",
+                                value: (product.vegNonVeg in ["VEG", "veg"]) ? "yes" : "no"
+                            }
+                        ]
+                    }
+                ]
+            }
+
+            if (product.type === "item") {
+                let fulfillment_id = ""
+                for (const foption of org.storeDetails.fulfillments) {
+                    if (foption.type === product.fulfillmentOption) {
+                        fulfillment_id = foption.id
+                        break;
+                    }
+                }
+
+                for (const image_path of product.images) {
+                    const image_url = this.get_s3_url(image_path)
+                    promises.push(image_url)
+                }
+                const image_urls = await Promise.all(promises)
+
+                // description
+                entry.descriptor.symbol = image_urls[0]
+                entry.descriptor.short_desc = product.description
+                entry.descriptor.long_desc = product.longDescription
+                entry.descriptor.images = image_urls
+                if (product.productSubcategory1) {
+                    entry.category = product.productSubcategory1
+                }
+
+                // [TODO]
+                entry.category_ids = []
+
+                entry.fulfillment_id = fulfillment_id
+                entry.location_id = org.storeDetails.location._id.toString()
+
+                entry.recommended = false
+                entry["@ondc/org/returnable"] = product.isReturnable.toString()
+                entry["@ondc/org/cancellable"] = product.isCancellable.toString()
+                entry["@ondc/org/return_window"] = product.returnWindow
+                entry["@ondc/org/seller_pickup_return"] = false
+                entry["@ondc/org/time_to_ship"] = "PT45M"
+                entry["@ondc/org/available_on_cod"] = product.availableOnCod.toString()
+                entry["@ondc/org/contact_details_consumer_care"] = `${org.name},${org.contactEmail},${org.contactMobile}`
+
+                // NOTE: timing tags are not supported in seller app
+                if (product.customizationGroupId) {
+                    const cg_entry = {
+                        code: "custom_group",
+                        list: [
+                            {
+                                code: "id",
+                                value: product.customizationGroupId
+                            }
+                        ]
+                    }
+                    entry.tags.push(cg_entry)
+                }
+
+            } else if (product.type === "customization") {
+                // parent-child relation tags
+                const custom_group_map = await CustomizationGroupMapping.find( {customization: product._id} ).lean();
+                if (custom_group_map.length > 0) {
+                    const cg_parent_entry = {
+                        code: "parent",
+                        list: [
+                            {
+                                code: "id",
+                                value: custom_group_map[0].parent
+                            },
+                            {
+                                code: "default",
+                                value: custom_group_map[0].default ? "yes" : "no"
+                            },
+                        ]
+                    }
+                    entry.tags.push(cg_parent_entry);
+
+                    const cg_child_entry = {
+                        code: "child",
+                        list: [
+                        ]
+                    }
+                    for (const grp of custom_group_map) {
+                        cg_child_entry.list.push(
+                            {
+                                code: "id",
+                                value: grp.child
+                            }
+                        )
+                    }
+                    entry.tags.push(cg_child_entry)
+                }
+            }
+            details[entry.id] = entry
+        }
+
+        return details;
+    }
+
+    async build_tags_block(org) {
+        const store_detail = org.storeDetails
+        const store_timing = store_detail.storeTiming
+        const store_service = store_detail.radius
+
+        const service_entry = {
+            code: "serviceability",
+            list: [
+                {
+                    code: "location",
+                    value: store_detail.location._id.toString()
+                },
+                {
+                    code: "category",
+                    value: "F&B"
+                },
+                {
+                    code: "type",
+                    value: "10"
+                },
+                {
+                    code: "val",
+                    value: store_service.value
+                },
+                {
+                    code: "unit",
+                    value: store_service.unit
+                },
+            ]
+        }
+
+        const tags = this.build_timing_tags(store_timing.enabled)
+        tags.push(service_entry)
+        return tags
+    }
+
     async getOrgsDetailsForOndc(orgId) {
         // return the entire store details in the format of ProviderSchema
         try {
             const customizationService = new CustomizationService();
             const productService = new ProductService();
-
-            let query = {};
 
             let orgs;
             if (orgId) {
@@ -43,498 +452,27 @@ class OrganizationService {
             let providers = [];
 
             for (const org of orgs) {
-                let provider = {};
                 const store = org.storeDetails;
                 if (store.location === undefined) continue;
-                const storeLogo = await s3.getSignedUrlForRead({
-                    path: store.logo,
-                });
+
+                let provider = {};
+
                 provider.provider_id = org._id;
-                provider.ttl = "1"; // @TODO - what is this?
-                provider.on_network_logistics = true; // @TODO - what is this?
-                provider.tags = []; // @TODO - handle
-                provider.offers = {}; // @TODO - handle
+                provider.on_network_logistics = true;
+                provider.ttl = "P1D";
                 provider.time = {
-                    label: "enabled",
+                    label: org.isEnabled
                 };
-                provider.details = {
-                    descriptor: {
-                        name: org.name,
-                        short_desc: org.name,
-                        long_desc: org.name,
-                        images: [storeLogo.url],
-                        tags: [],
-                    },
-                    "@ondc/org/fssai_license_no": org.FSSAI,
-                };
-                console.log(
-                    "-----------------------------------------------------location id",
-                    store.location,
-                    store
-                );
+                provider.details = await this.build_provider_detail_block(org);
                 provider.locations = {
-                    [store.location._id]: {
-                        id: store.location._id.toString(),
-                        gps: store.location.lat + "," + store.location.long,
-                        address: {
-                            locality: store.address.locality,
-                            street: store.address.building, // @TODO - street is not there
-                            city: store.address.city,
-                            area_code: store.address.area_code,
-                            state: store.address.state,
-                        },
-                        circle: {
-                            gps: store.location.lat + "," + store.location.long,
-                            radius: store.radius,
-                        },
-                        contact: {
-                            phone: store.supportDetails.mobile,
-                        },
-                    },
+                    [store.location._id]: await this.build_location_detail_block(org)
                 };
-
-                provider.fulfillments = {};
-                for (const fulfillment of store.fulfillments) {
-                    provider.fulfillments[fulfillment.id] = {
-                        id: fulfillment.id.toString(),
-                        type: fulfillment.type,
-                        contact: {
-                            phone: fulfillment.contact.phone,
-                            mail: fulfillment.contact.email,
-                        },
-                    };
-                }
-
-                let categories = {};
-                let items = {};
-
-                let customMenu = [];
-                query.organization = org._id;
-                query.published = true;
-
-                const timingTags = {
-                    code: "timing",
-                    list: [
-                        {
-                            code: "day_from",
-                            value: store.storeTiming.enabled[0].daysRange.from,
-                        },
-                        {
-                            code: "day_to",
-                            value: store.storeTiming.enabled[0].daysRange.to,
-                        },
-                        {
-                            code: "time_from",
-                            value: store.storeTiming.enabled[0].timings[0].from,
-                        },
-                        {
-                            code: "time_to",
-                            value: store.storeTiming.enabled[0].timings[0].to,
-                        },
-                    ],
-                };
-
-                // query.productName = {$regex: params.message.intent.item.descriptor.name,$options: 'i'}
-                //let product = await Product.findOne({_id:productId,organization:currentUser.organization}).populate('variantGroup').lean();
-
-                const data = await Product.find(query)
-                    .populate("variantGroup")
-                    .sort({ createdAt: 1 })
-                    .lean();
-                if (data.length > 0) {
-                    for (let product of data) {
-                        let productDetails = product;
-                        let images = [];
-                        for (const image of productDetails.images) {
-                            let imageData = await s3.getSignedUrlForRead({
-                                path: image,
-                            });
-                            images.push(imageData.url);
-                        }
-                        product.images = images;
-                        let attributeData = [];
-                        const attributes = await ProductAttribute.find({
-                            product: product._id,
-                        });
-                        for (const attribute of attributes) {
-                            let value = attribute.value;
-                            if (attribute.code === "size_chart") {
-                                let sizeChart = await s3.getSignedUrlForRead({
-                                    path: attribute.value,
-                                });
-                                value = sizeChart?.url ?? "";
-                            }
-                            const attributeObj = {
-                                code: attribute.code,
-                                value: value,
-                            };
-                            attributeData.push(attributeObj);
-                        }
-                        product.attributes = attributeData;
-
-                        const customizationDetails =
-                            (await customizationService.mappdedData(
-                                product.customizationGroupId,
-                                { organization: product.organization }
-                            )) ?? {};
-                        product.customizationDetails = customizationDetails;
-
-                        let customGroupsTags = [];
-                        if (Object.keys(customizationDetails).length > 0) {
-                            const accumulatedMaxMRP =
-                                await productService.getMaxMRP(
-                                    product.customizationGroupId,
-                                    {
-                                        maxMRP: product.MRP,
-                                        maxDefaultMRP: product.MRP,
-                                    },
-                                    { organization: product.organization }
-                                );
-                            product.maxMRP =
-                                accumulatedMaxMRP?.maxMRP ?? product.MRP;
-                            product.maxDefaultMRP =
-                                accumulatedMaxMRP?.maxDefaultMRP ?? product.MRP;
-
-                            let customizationGroups =
-                                customizationDetails.customizationGroups;
-
-                            for (const customizationGroup of customizationGroups) {
-                                let cgId = customizationGroup._id.toString();
-                                // if cgId is present as key in categories then skip
-                                if (categories[cgId]) {
-                                    continue;
-                                }
-
-                                categories[cgId] = {
-                                    id: cgId,
-                                    descriptor: {
-                                        name: customizationGroup.name,
-                                    },
-                                    tags: [
-                                        {
-                                            code: "type",
-                                            list: [
-                                                {
-                                                    code: "type",
-                                                    value: "custom_group",
-                                                },
-                                            ],
-                                        },
-                                        {
-                                            code: "config",
-                                            list: [
-                                                {
-                                                    code: "min",
-                                                    value: customizationGroup.minQuantity,
-                                                },
-                                                {
-                                                    code: "max",
-                                                    value: customizationGroup.maxQuantity,
-                                                },
-                                                {
-                                                    code: "input",
-                                                    value: customizationGroup.inputType,
-                                                },
-                                                {
-                                                    code: "seq",
-                                                    value: customizationGroup.seq,
-                                                },
-                                            ],
-                                        },
-                                    ],
-                                };
-
-                                // customGroupsTags.push({
-                                //     code: "id",
-                                //     value: cgId,
-                                // });
-                            }
-                            for (const customizationGroup of customizationGroups) {
-                                let cgId = customizationGroup._id.toString();
-
-                                // if cgId is already present in customGroupsTags then skip
-                                if (
-                                    customGroupsTags.find(
-                                        (cgt) => cgt.value === cgId
-                                    )
-                                ) {
-                                    continue;
-                                }
-
-                                // customGroupsTags.push({
-                                //     code: "id",
-                                //     value: cgId,
-                                // });
-                            }
-                        }
-
-                        customGroupsTags.push({
-                            code: "id",
-                            value: product.customizationGroupId,
-                        });
-                        // console.log(
-                        //     "--------------->>>",
-                        //     util.inspect(product)
-                        // );
-                        // console.log("product", product);
-                        let parentCGId = "";
-                        let childCGId = "";
-                        let isDefault;
-                        if (product.type === "customization") {
-                            // get the customization
-                            const customizationMap =
-                                await CustomizationGroupMapping.findOne({
-                                    customization: product._id,
-                                });
-
-                            parentCGId = customizationMap.parent;
-                            isDefault = customizationMap.default;
-                            childCGId = customizationMap.child;
-                        }
-
-                        const product_id = product._id.toString();
-
-                        if (!items[product_id]) {
-                            items[product_id] = {
-                                id: product_id,
-                                descriptor: {
-                                    name: product.productName,
-                                    short_desc: product.description,
-                                    long_desc: product.longDescription,
-                                    images: product.images,
-                                    symbol: product.images[0],
-                                },
-                                quantity: {
-                                    unitized: {
-                                        measure: {
-                                            unit: product.UOM,
-                                            value: product.UMOValue,
-                                        },
-                                    },
-                                    available: {
-                                        count: product.quantity,
-                                    },
-                                    maximum: {
-                                        count: product.maxAllowedQty,
-                                    },
-                                },
-                                price: {
-                                    currency: "INR",
-                                    value: product.purchasePrice || product.MRP,
-                                    maximum_value: product.MRP,
-                                },
-                                category_id: product.productCategory,
-                                category_ids: [], // @TODO
-                                fulfillment_id: store.fulfillments.find(
-                                    (f) => f.type === product.fulfillmentOption
-                                )?.id,
-                                location_id: store.location._id.toString(),
-                                related: product.type === "item" ? false : true,
-                                recommended: false, // @TODO what is it?
-                                "@ondc/org/returnable": product.isReturnable,
-                                "@ondc/org/cancellable": product.isCancellable,
-                                "@ondc/org/return_window": product.returnWindow,
-                                "@ondc/org/seller_pickup_return": false, // @TODO what is it?
-                                "@ondc/org/time_to_ship": "PT45M", // @TODO what is it?
-                                "@ondc/org/available_on_cod":
-                                    product.availableOnCod,
-                                "@ondc/org/contact_details_consumer_care":
-                                    store.supportDetails.email +
-                                    ", " +
-                                    store.supportDetails.mobile,
-                                tags: [
-                                    {
-                                        code: "type",
-                                        list: [
-                                            {
-                                                code: "type",
-                                                value: product.type,
-                                            },
-                                        ],
-                                    },
-                                    ...(product.type === "item"
-                                        ? [
-                                              {
-                                                  code: "custom_group",
-                                                  list: customGroupsTags,
-                                              },
-                                              timingTags,
-                                          ]
-                                        : [
-                                              {
-                                                  code: "parent",
-                                                  list: [
-                                                      {
-                                                          code: "id",
-                                                          value: parentCGId,
-                                                      },
-                                                      {
-                                                          code: "default",
-                                                          value: isDefault
-                                                              ? "yes"
-                                                              : "no",
-                                                      },
-                                                  ],
-                                              },
-
-                                              ...(childCGId && [
-                                                  {
-                                                      code: "child",
-                                                      list: [
-                                                          {
-                                                              code: "id",
-                                                              value: childCGId,
-                                                          },
-                                                      ],
-                                                  },
-                                              ]),
-                                          ]),
-
-                                    {
-                                        code: "veg_nonveg",
-                                        list: [
-                                            {
-                                                code: "veg",
-                                                value:
-                                                    // make verNonVeg lowercase and only checkg the first 3 letters
-                                                    product.vegNonVeg
-                                                        ?.toLowerCase()
-                                                        .substring(0, 3) ===
-                                                    "veg"
-                                                        ? "yes"
-                                                        : "no",
-                                            },
-                                        ],
-                                    },
-                                ],
-                            };
-                        }
-                    }
-                    // getting Menu for org ->
-                    let menus = await CustomMenu.find({
-                        // category: category,
-                        organization: org._id,
-                    }).lean();
-                    for (const menu of menus) {
-                        let customMenuTiming = await CustomMenuTiming.findOne({
-                            customMenu: menu._id,
-                            organization: org._id,
-                        });
-                        let images = [];
-                        let menuObj = {
-                            id: menu._id,
-                            name: menu.name,
-                            seq: menu.seq,
-                        };
-                        for (const image of menu.images) {
-                            let imageData = await s3.getSignedUrlForRead({
-                                path: image,
-                            });
-                            images.push(imageData.url);
-                        }
-                        let menuQuery = {
-                            organization: org._id,
-                            customMenu: menu._id,
-                        };
-                        let menuProducts = await CustomMenuProduct.find(
-                            menuQuery
-                        )
-                            .sort({ seq: "ASC" })
-                            .populate([
-                                {
-                                    path: "product",
-                                    select: ["_id", "productName"],
-                                },
-                            ]);
-                        let productData = [];
-                        for (const menuProduct of menuProducts) {
-                            let productObj = {
-                                id: menuProduct.product._id,
-                                name: menuProduct.product.productName,
-                                seq: menuProduct.seq,
-                            };
-                            productData.push(productObj);
-                        }
-                        menuObj.products = productData;
-                        menuObj.images = images;
-                        menuObj.timings = customMenuTiming?.timings ?? [];
-                        customMenu.push(menuObj);
-                        console.log(
-                            "---------------------------------customMenu",
-                            util.inspect(CustomMenuTiming, false, 10)
-                        );
-                        if (categories[menu._id]) continue;
-                        categories[menu._id] = {
-                            id: menu._id,
-                            parent_category_id: "",
-                            descriptor: {
-                                name: menu.name,
-                                short_desc: menu.shortDescription,
-                                long_desc: menu.longDescription,
-                                images: images,
-                            },
-                            tags: [
-                                {
-                                    code: "type",
-                                    list: [
-                                        {
-                                            code: "type",
-                                            value: "custom_menu",
-                                        },
-                                    ],
-                                },
-                                {
-                                    code: "timing",
-                                    list: [
-                                        {
-                                            code: "day_from",
-                                            value: customMenuTiming?.timings[0]
-                                                .daysRange.from,
-                                        },
-                                        {
-                                            code: "day_to",
-                                            value: customMenuTiming?.timings[0]
-                                                .daysRange.to,
-                                        },
-                                        {
-                                            code: "time_from",
-                                            value: customMenuTiming?.timings[0]
-                                                .timings[0].from,
-                                        },
-                                        {
-                                            code: "time_to",
-                                            value: customMenuTiming?.timings[0]
-                                                .timings[0].to,
-                                        },
-                                    ],
-                                },
-                                {
-                                    code: "display",
-                                    list: [
-                                        {
-                                            code: "rank",
-                                            value: menu.seq,
-                                        },
-                                    ],
-                                },
-                            ],
-                        };
-                    }
-                }
-
-                provider.categories = categories;
-                provider.items = items;
-
-                providers.push(provider);
+                provider.fulfillments = await this.build_fulfillment_block(org);
+                provider.categories = await this.build_categories_block(org);
+                provider.items = await this.build_item_block(org)
+                provider.offers = {}; // not supported in the seller app
+                provider.tags = this.build_tags_block()
             }
-
-            console.log("--------> provider: ");
-            // console.log(
-            //     util.inspect(provider, false, null, true /* enable colors */)
-            // );
-
-            //collect all store details by
-            // return products;
 
             return providers;
         } catch (err) {
