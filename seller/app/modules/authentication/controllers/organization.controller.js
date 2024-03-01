@@ -78,7 +78,7 @@ class OrganizationController {
                 await organizationService.getOrgsDetailsForOndc(
                     params.organizationId
                 );
-            return res.send(organizations[0]);
+            return res.json(organizations[0]);
         } catch (error) {
             console.log("[OrderController] [get] Error -", error);
             next(error);
@@ -87,10 +87,11 @@ class OrganizationController {
 
     async getAllOrgDetailsForOndc(req, res, next) {
         try {
+            console.log("getAllOrgDetailsForOndc from controller")
             const params = req.params;
             const organizations =
                 await organizationService.getOrgsDetailsForOndc();
-            return res.send(organizations);
+            return res.json(organizations);
         } catch (error) {
             console.log("[OrderController] [get] Error -", error);
             next(error);

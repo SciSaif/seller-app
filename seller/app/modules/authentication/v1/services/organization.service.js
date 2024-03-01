@@ -44,10 +44,10 @@ class OrganizationService {
         const detail_block = {
             descriptor: {
                 name: org.name,
-                symbol: storeLogo.url,
+                symbol: storeLogo,
                 short_desc: org.name,
                 long_desc: org.name,
-                images: [storeLogo.url],
+                images: [storeLogo],
             },
             "@ondc/org/fssai_license_no": org.FSSAI,
         }
@@ -62,7 +62,7 @@ class OrganizationService {
             id: store.location._id.toString(),
             gps: `${store.location.lat},${store.location.long}`,
             time: {
-                label: store.storeTiming.status,
+                label: store.storeTiming.status ? "enable" : "disable",
                 timestamp: new Date().toISOString(),
                 days: "1,2,3,4,5,6,7", // [FIXME] hard-coded
                 schedule: {
@@ -100,7 +100,7 @@ class OrganizationService {
                 type: fulfillment.type,
                 contact: {
                     phone: fulfillment.contact.phone,
-                    mail: fulfillment.contact.email,
+                    email: fulfillment.contact.email,
                 },
             };
         }
@@ -189,7 +189,8 @@ class OrganizationService {
         for (const menu_timing of custom_menu_timings) {
             if (menu_timing.customMenu in detail_block) {
                 const timings = menu_timing.timings
-                detail_block[menu_timing.customMenu].tags.push(...this.build_timing_tags(timings))
+                const tag_timings = await this.build_timing_tags(timings)
+                detail_block[menu_timing.customMenu].tags.push(...tag_timings)
             }
         }
 
@@ -201,7 +202,7 @@ class OrganizationService {
         const custom_groups = await CustomizationGroup.find({organization: org._id})
         for (const custom_group of custom_groups) {
             detail_block[custom_group._id] = {
-                id: _id,
+                id: custom_group._id,
                 descriptor: {
                     name: custom_group.name,
                 },
@@ -243,8 +244,8 @@ class OrganizationService {
     }
 
     async build_categories_block(org) {
-        const custom_menu = await this.build_categories_block_from_custom_menu();
-        const custom_group = await this.build_categories_block_from_custom_group();
+        const custom_menu = await this.build_categories_block_from_custom_menu(org);
+        const custom_group = await this.build_categories_block_from_custom_group(org);
         return {
             ...custom_menu,
             ...custom_group
@@ -280,8 +281,8 @@ class OrganizationService {
                 },
                 price: {
                     currency: "INR",
-                    value: product.MRP,
-                    maximum_value: product.MRP,
+                    value: product.MRP.toString(),
+                    maximum_value: product.MRP.toString(),
                 },
                 category: "F&B",
                 related: (product.type !== "item"),
@@ -300,7 +301,7 @@ class OrganizationService {
                         list: [
                             {
                                 code: "veg",
-                                value: (product.vegNonVeg in ["VEG", "veg"]) ? "yes" : "no"
+                                value: (["VEG", "veg"].includes(product.vegNonVeg)) ? "yes" : "no"
                             }
                         ]
                     }
@@ -316,6 +317,7 @@ class OrganizationService {
                     }
                 }
 
+                const promises = []
                 for (const image_path of product.images) {
                     const image_url = this.get_s3_url(image_path)
                     promises.push(image_url)
@@ -398,6 +400,15 @@ class OrganizationService {
             details[entry.id] = entry
         }
 
+        const custom_menu_products = await CustomMenuProduct.find({
+            organization: org._id,
+        }).lean();
+        for (const custom_menu_product of custom_menu_products) {
+            if (custom_menu_product.product in details) {
+                details[custom_menu_product.product].category_ids.push(`${custom_menu_product.customMenu}:${custom_menu_product.seq}`);
+            }
+        }
+
         return details;
     }
 
@@ -432,7 +443,7 @@ class OrganizationService {
             ]
         }
 
-        const tags = this.build_timing_tags(store_timing.enabled)
+        const tags = await this.build_timing_tags(store_timing.enabled)
         tags.push(service_entry)
         return tags
     }
@@ -440,6 +451,7 @@ class OrganizationService {
     async getOrgsDetailsForOndc(orgId) {
         // return the entire store details in the format of ProviderSchema
         try {
+            console.log("getAllOrgDetailsForOndc from service")
             const customizationService = new CustomizationService();
             const productService = new ProductService();
 
@@ -461,7 +473,7 @@ class OrganizationService {
                 provider.on_network_logistics = true;
                 provider.ttl = "P1D";
                 provider.time = {
-                    label: org.isEnabled
+                    label: org.isEnabled ? "enable" : "disable"
                 };
                 provider.details = await this.build_provider_detail_block(org);
                 provider.locations = {
@@ -471,7 +483,25 @@ class OrganizationService {
                 provider.categories = await this.build_categories_block(org);
                 provider.items = await this.build_item_block(org)
                 provider.offers = {}; // not supported in the seller app
-                provider.tags = this.build_tags_block()
+                provider.tags = await this.build_tags_block(org)
+                provider.item_name_cache = []
+                provider.category_name_cache = []
+                provider.fulfillment_type_cache = []
+
+                for (const item of Object.values(provider.items)) {
+                    if (!item.related) {
+                    provider.item_name_cache.push(item.descriptor.name)
+                    }
+                }
+                for (const category of Object.values(provider.categories)) {
+                    if (category.tags[0].list[0].value === "custom_menu") {
+                    provider.category_name_cache.push(category.descriptor.name)
+                    }
+                }
+                for (const fulfillment of Object.values(provider.fulfillments)) {
+                    provider.fulfillment_type_cache.push(fulfillment.type)
+                }
+                providers.push(provider)
             }
 
             return providers;
