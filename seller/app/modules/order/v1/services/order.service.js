@@ -242,17 +242,71 @@ class OrderService {
 
     async updateOrderStatus(orderId, data) {
         try {
+            // const order = await this.get_order_by_orderId(order_id, buyerapp_id);
+            // if (order === null) {
+            //     return InternalErrorCode.ORDER.ORDER_NOT_FOUND;
+            // }
+            // const order_fulfillments = order.fulfillments;
+            // const fulfillments = [...order_fulfillments];
+            // fulfillments[0].state.descriptor.code = fulfillment_status;
+            // let status: ProtocolNamespace.OrderState;
+            // switch (fulfillment_status) {
+            //     case ProtocolNamespace.FulfillmentStatus.PENDING:
+            //         status = ProtocolNamespace.OrderState.CREATED;
+            //         break;
+            //     case ProtocolNamespace.FulfillmentStatus.ORDER_DELIVERED:
+            //         status = ProtocolNamespace.OrderState.COMPLETED;
+            //         break;
+            //     case ProtocolNamespace.FulfillmentStatus.CANCELLED:
+            //         status = ProtocolNamespace.OrderState.CANCELLED;
+            //         break;
+            //     default:
+            //         status = ProtocolNamespace.OrderState.IN_PROGRESS;
+            // }
+
+            // if (order_status === ProtocolNamespace.OrderState.ACCEPTED) {
+            //     status = order_status;
+            // }
+
+            // const result = await this.update_order(
+            //     {
+            //         order_id: order_id,
+            //         buyer_id: buyerapp_id,
+            //     },
+            //     {
+            //         status,
+            //         fulfillments,
+            //     },
+            // );
             let order = await Order.findOne({ _id: orderId }).lean();
 
             //update order state
             order.state = data.status;
 
+            const fulfillments = [...order.fulfillments];
+            if (data.status !== "Accepted") {
+                fulfillments[0].state.descriptor.code = data.status;
+            } else fulfillments[0].state.descriptor.code = "Pending";
+
+            let order_status;
+            switch (data.status) {
+                case "Cancelled":
+                    order_status = "Cancelled";
+                    break;
+                case "Order-delivered":
+                    order_status = "Completed";
+                    break;
+                default:
+                    order_status = "In-progress";
+            }
+
+            // await order.save();
             await Order.findOneAndUpdate(
                 { _id: orderId },
-                { state: data.status }
+                { state: order_status, fulfillments }
             );
 
-            console.log("order ----> ", order);
+            console.log("status ----> ", data.status);
             // seller: Joi.object({
             //     seller_id: Joi.string().required(),
             // }).required(),
@@ -278,7 +332,14 @@ class OrderService {
                         order: {
                             id: order.orderId,
                             buyer_app: order.buyer_app,
-                            status: data.status,
+                            fulfillment_status:
+                                data.status === "Accepted"
+                                    ? "Pending"
+                                    : data.status,
+                            order_status:
+                                data.status === "Accepted"
+                                    ? "Accepted"
+                                    : undefined,
                         },
                     },
                 },
@@ -295,7 +356,10 @@ class OrderService {
             //     {}
             // );
             // await httpRequest.send();
-
+            order.state = data.status;
+            if (order.state === "Order-delivered") {
+                order.state === "Completed";
+            }
             return order;
         } catch (err) {
             console.log(
@@ -840,7 +904,7 @@ class OrderService {
                     },
                 },
             };
-
+            console.log("sending cancel request to backend", req);
             // send cancel request to tsp
             let httpRequest = new HttpRequest(
                 process.env.BASE_TSP_URL,
