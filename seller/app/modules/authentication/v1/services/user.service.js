@@ -316,6 +316,13 @@ class UserService {
             } else {
                 users.enabled = data.enabled;
                 await users.save();
+                const organization_id = users.organization;
+                // set isEnabled to false for the organization
+                await Organization.updateOne(
+                    { _id: organization_id },
+                    { isEnabled: data.enabled }
+                );
+
                 return data;
             }
         } catch (err) {

@@ -36,9 +36,12 @@ class OrganizationService {
 
             let orgs;
             if (orgId) {
-                orgs = await Organization.find({ _id: orgId }).lean();
+                orgs = await Organization.find({
+                    _id: orgId,
+                    isEnabled: true,
+                }).lean();
             } else {
-                orgs = await Organization.find().lean();
+                orgs = await Organization.find({ isEnabled: true }).lean();
             }
             let providers = [];
 
@@ -67,11 +70,11 @@ class OrganizationService {
                     },
                     "@ondc/org/fssai_license_no": org.FSSAI,
                 };
-                console.log(
-                    "-----------------------------------------------------location id",
-                    store.location,
-                    store
-                );
+                // console.log(
+                //     "-----------------------------------------------------location id",
+                //     store.location,
+                //     store
+                // );
                 provider.locations = {
                     [store.location._id]: {
                         id: store.location._id.toString(),
@@ -287,6 +290,12 @@ class OrganizationService {
                                     customization: product._id,
                                 });
 
+                            console.log(
+                                "product",
+                                product._id,
+                                customizationMap
+                            );
+
                             parentCGId = customizationMap.parent;
                             isDefault = customizationMap.default;
                             childCGId = customizationMap.child;
@@ -308,7 +317,7 @@ class OrganizationService {
                                     unitized: {
                                         measure: {
                                             unit: product.UOM,
-                                            value: product.UMOValue,
+                                            value: product.UOMValue,
                                         },
                                     },
                                     available: {
@@ -633,7 +642,9 @@ class OrganizationService {
 
     async list(params) {
         try {
-            let query = {};
+            let query = {
+                isEnabled: true,
+            };
             if (params.name) {
                 query.name = { $regex: params.name, $options: "i" };
             }
