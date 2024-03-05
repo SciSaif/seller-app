@@ -290,11 +290,11 @@ class OrganizationService {
                                     customization: product._id,
                                 });
 
-                            console.log(
-                                "product",
-                                product._id,
-                                customizationMap
-                            );
+                            // console.log(
+                            //     "product",
+                            //     product._id,
+                            //     customizationMap
+                            // );
 
                             parentCGId = customizationMap.parent;
                             isDefault = customizationMap.default;
@@ -320,6 +320,7 @@ class OrganizationService {
                                             value: product.UOMValue,
                                         },
                                     },
+
                                     available: {
                                         count: product.quantity,
                                     },
