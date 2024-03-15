@@ -61,10 +61,11 @@ class OrganizationService {
     yesterday.setDate(yesterday.getDate() - 1);
 
     const detail_block = {
-      id: store.location._id.toString(),
+      // id: org._id,
+      id: "65e887ed749479b3aea2e7c2",
       gps: `${store.location.lat},${store.location.long}`,
       time: {
-        label: store.storeTiming.status ? "enable" : "disable",
+        label: store.storeTiming.status !== "disabled" ? "enable" : "disable",
         timestamp: yesterday.toISOString(),
         days: "1,2,3,4,5,6,7", // [FIXME] hard-coded
         schedule: {
@@ -293,7 +294,9 @@ class OrganizationService {
           value: product.MRP.toString(),
           maximum_value: product.MRP.toString(),
         },
-        category: "F&B",
+        category_id: "F&B",
+        // location_id: org._id,
+        location_id: "65e887ed749479b3aea2e7c2",
         related: product.type !== "item",
         tags: [
           {
@@ -341,14 +344,13 @@ class OrganizationService {
         entry.descriptor.long_desc = product.longDescription;
         entry.descriptor.images = image_urls;
         if (product.productSubcategory1) {
-          entry.category = product.productSubcategory1;
+          entry.category_id = product.productSubcategory1;
         }
 
         // [TODO]
         entry.category_ids = [];
 
         entry.fulfillment_id = fulfillment_id;
-        entry.location_id = org.storeDetails.location._id.toString();
 
         entry.recommended = false;
         entry["@ondc/org/returnable"] = product.isReturnable.toString();
@@ -493,8 +495,12 @@ class OrganizationService {
           label: org.isEnabled ? "enable" : "disable",
         };
         provider.details = await this.build_provider_detail_block(org);
+        // keeping store_id is same as provider_id
         provider.locations = {
-          [store.location._id]: await this.build_location_detail_block(org),
+          // [org._id]: await this.build_location_detail_block(org),
+          "65e887ed749479b3aea2e7c2": await this.build_location_detail_block(
+            org
+          ),
         };
         provider.fulfillments = await this.build_fulfillment_block(org);
         provider.categories = await this.build_categories_block(org);
@@ -774,7 +780,8 @@ class OrganizationService {
       if (organization) {
         organization.storeDetails = data;
         organization.save();
-        this.notifyStoreUpdate(data, organizationId);
+        // this.notifyStoreUpdate(data, organizationId);
+        this.notifyStoreUpdateToCore(organization);
       } else {
         throw new NoRecordFoundError(MESSAGES.ORGANIZATION_NOT_EXISTS);
       }
@@ -809,7 +816,6 @@ class OrganizationService {
             );
           }
         }
-        console.log("hello");
         let updateOrg = await Organization.findOneAndUpdate(
           { _id: organizationId },
           data.providerDetails
@@ -873,6 +879,47 @@ class OrganizationService {
     }
     return { success: true };
   }
+
+  async notifyStoreUpdateToCore(organization) {
+    const orgId = organization._id;
+    const store = organization.storeDetails;
+    console.log(
+      "notifyStoreUpdateToCore",
+      JSON.stringify(store, null, 4),
+      orgId
+    );
+    const req = {
+      seller: {
+        seller_id: "ondc.wallic.io",
+      },
+      provider: {
+        provider_id: orgId,
+        location: {
+          // id: orgId,
+          id: "65e887ed749479b3aea2e7c2",
+          label: "enable",
+        },
+      },
+    };
+
+    if (store.storeTiming?.status === "disabled") {
+      req.provider.location.label = "disable";
+    } else if (store.storeTiming?.status === "closed") {
+      req.provider.location.label = "close";
+      req.provider.location.range = store.storeTiming;
+    }
+
+    let httpRequest = new HttpRequest(
+      process.env.BASE_TSP_URL,
+      "/merchant/update_detail",
+      "POST",
+      req,
+      {}
+    );
+    console.log("[SELLER_APP_TO_CORE] store update", req);
+    await httpRequest.send();
+  }
+
   async notifyStoreUpdate(store, orgId) {
     let requestData = {
       organization: orgId,

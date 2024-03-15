@@ -316,11 +316,40 @@ class UserService {
           { _id: org_id },
           { isEnabled: data.enabled }
         );
+
+        // [PROVIDER ENABLE/DISABLE HERE]
+        // respond back to the core
+        this.notifyProviderUpdateToCore(org_id, data.enabled);
+
         return data;
       }
     } catch (err) {
       throw err;
     }
+  }
+
+  async notifyProviderUpdateToCore(orgId, active_status) {
+    const req = {
+      seller: {
+        seller_id: "ondc.wallic.io",
+      },
+      provider: {
+        provider_id: orgId,
+        active: {
+          label: active_status,
+        },
+      },
+    };
+
+    let httpRequest = new HttpRequest(
+      process.env.BASE_TSP_URL,
+      "/merchant/update_detail",
+      "POST",
+      req,
+      {}
+    );
+    console.log("[SELLER_APP_TO_CORE] provider update", req);
+    await httpRequest.send();
   }
 
   /**
