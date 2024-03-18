@@ -16,6 +16,7 @@ import BannedUser from "../../models/bannedUser.model";
 import Organization from "../../models/organization.model";
 import ServiceApi from "../../../../lib/utils/serviceApi";
 import s3 from "../../../../lib/utils/s3Utils";
+import HttpRequest from "../../../../lib/utils/HttpRequest";
 
 class UserService {
   /**
@@ -336,7 +337,7 @@ class UserService {
       provider: {
         provider_id: orgId,
         active: {
-          label: active_status,
+          label: active_status ? "enable" : "disable",
         },
       },
     };
